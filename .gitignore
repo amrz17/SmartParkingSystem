@@ -1,0 +1,36 @@
+# Byte-compiled files
+*.pyc
+*.pyo
+*.pyd
+__pycache__
+
+# Virtual environment directory
+venv/
+env/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependency directories
+Pipfile.lock
+*.egg-info/
+
+# Environment variable files
+.env
+*.env
+
+# MacOS specific files
+.DS_Store
+
+# Log files
+*.log
+
+# SQLite database files (if using SQLite)
+*.db
+*.sqlite3
+
+# Python eggs (optional)
+.eggs/
