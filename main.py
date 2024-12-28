@@ -7,7 +7,9 @@ model_path = "best.pt"  # Ganti dengan path model Anda
 model = YOLO(model_path)
 
 # Buka kamera (biasanya kamera default adalah 0)
-cap = cv2.VideoCapture(0)
+camera_ip = "http://192.168.1.7:81/stream"  # Ganti dengan URL stream video kamera ESP32-S3 Anda
+
+cap = cv2.VideoCapture(camera_ip)  # Ganti dengan sumber video yang sesuai
 
 if not cap.isOpened():
     print("Gagal membuka kamera!")

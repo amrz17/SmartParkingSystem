@@ -19,6 +19,7 @@ Pipfile.lock
 *.egg-info/
 
 # Environment variable files
+.venv
 .env
 *.env
 
