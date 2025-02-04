@@ -1,7 +1,7 @@
 import os
 from ultralytics import YOLO
 import cv2
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
@@ -44,61 +44,70 @@ def create_app():
     def detect_objects_stream():
         model_path = "best.pt"  # Ganti dengan path model Anda
         model = YOLO(model_path)
-        camera_ip = "http://192.168.1.7:81/stream"  # Ganti dengan URL stream video kamera ESP32-S3 Anda
+
+        # Ganti alamat IP dan port sesuai dengan kamera ESP32-S3 Anda
+        camera_ip = "http://192.168.1.7/stream"  # Ganti dengan URL stream video kamera ESP32-S3 Anda
 
         cap = cv2.VideoCapture(camera_ip)
 
         if not cap.isOpened():
-            return jsonify({"error": "Gagal membuka kamera!"}), 500
+            return jsonify(
+                {"error": "Gagal membuka kamera. Periksa koneksi dan konfigurasi!"}
+            ), 500
+
+        frame_counter = 0
+        interval = 5  # Deteksi setiap 5 frame
+        detections_to_save = []
 
         def generate_frames():
+            nonlocal frame_counter, detections_to_save
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break  # Berhenti jika frame tidak bisa dibaca
 
-                # Ubah resolusi menjadi 160x120
-                frame_resized = cv2.resize(frame, (160, 120))
+                if frame_counter % interval == 0:
+                    # Ubah resolusi menjadi 160x120 untuk deteksi lebih cepat
+                    frame_resized = cv2.resize(frame, (160, 120))
 
-                # Jalankan deteksi menggunakan model YOLO pada frame dengan resolusi rendah
-                results = model(frame_resized)
-                detected_objects = []
+                    # Jalankan deteksi menggunakan model YOLO pada frame dengan resolusi rendah
+                    results = model(frame_resized)
+                    detected_objects = []
 
-                # Iterasi hasil deteksi
-                for box in results[0].boxes:
-                    class_id = int(box.cls)  # Ambil indeks kelas
-                    class_name = model.names[
-                        class_id
-                    ]  # Ambil nama kelas berdasarkan indeks
-                    if class_name in [
-                        "mobil",
-                        "motor",
-                    ]:  # Filter hanya mobil atau motor
-                        detected_objects.append(class_name)
+                    # Iterasi hasil deteksi
+                    for box in results[0].boxes:
+                        class_id = int(box.cls)  # Ambil indeks kelas
+                        class_name = model.names[
+                            class_id
+                        ]  # Ambil nama kelas berdasarkan indeks
+                        if class_name in [
+                            "mobil",
+                            "motor",
+                        ]:  # Filter hanya mobil atau motor
+                            detected_objects.append(class_name)
 
-                if detected_objects:  # Jika ada mobil/motor terdeteksi
-                    # Visualisasi hasil deteksi
-                    annotated_frame = results[0].plot()
+                    if detected_objects:  # Jika ada mobil/motor terdeteksi
+                        # Visualisasi hasil deteksi
+                        annotated_frame = results[0].plot()
 
-                    # Simpan gambar anotasi
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    image_path = f"annotations/detection_{timestamp}.jpg"
-                    os.makedirs("annotations", exist_ok=True)
-                    cv2.imwrite(image_path, annotated_frame)
+                        # Simpan gambar anotasi
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        image_path = f"annotations/detection_{timestamp}.jpg"
+                        os.makedirs("annotations", exist_ok=True)
+                        cv2.imwrite(image_path, annotated_frame)
 
-                    # Konversi gambar anotasi ke format binary
-                    _, buffer = cv2.imencode(".jpg", annotated_frame)
-                    image_binary = buffer.tobytes()
+                        # Konversi gambar anotasi ke format binary
+                        _, buffer = cv2.imencode(".jpg", annotated_frame)
+                        image_binary = buffer.tobytes()
 
-                    # Simpan ke database menggunakan SQLAlchemy
-                    detection = Detection(
-                        timestamp=datetime.utcnow(),
-                        detected_objects=", ".join(detected_objects),
-                        image_path=image_path,
-                        data=image_binary,  # Simpan gambar sebagai BLOB
-                    )
-                    db.session.add(detection)
-                    db.session.commit()
+                        # Simpan ke database menggunakan SQLAlchemy
+                        detection = Detection(
+                            timestamp=datetime.utcnow(),
+                            detected_objects=", ".join(detected_objects),
+                            image_path=image_path,
+                            data=image_binary,  # Simpan gambar sebagai BLOB
+                        )
+                        detections_to_save.append(detection)
 
                 # Encode frame asli (sebelum resize) ke format JPEG untuk streaming
                 _, buffer = cv2.imencode(".jpg", frame)
@@ -110,12 +119,23 @@ def create_app():
                     b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
                 )
 
-            cap.release()
+                frame_counter += 1
+
+        # Simpan deteksi ke database setelah beberapa frame untuk mengurangi overhead
+        if detections_to_save:
+            try:
+                with app.app_context():
+                    db.session.add_all(detections_to_save)
+                    db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error saving to database: {e}")
 
         return (
-            generate_frames(),
+            Response(
+                generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"
+            ),
             200,
-            {"Content-Type": "multipart/x-mixed-replace; boundary=frame"},
         )
 
     return app
